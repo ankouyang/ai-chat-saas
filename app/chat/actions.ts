@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
+import { generateChatReply } from "@/lib/ai";
 import { prisma } from "@/lib/db";
 
 function buildChatTitle(content: string) {
@@ -14,10 +15,6 @@ function buildChatTitle(content: string) {
   }
 
   return normalized.slice(0, 24);
-}
-
-function buildAssistantReply(content: string) {
-  return `我先帮你把这条需求整理成可执行版本：${content.trim()}。下一步我们可以继续把它拆成标题方向、结构提纲和可直接上线的初稿。`;
 }
 
 async function requireUser() {
@@ -65,7 +62,6 @@ export async function sendMessageAction(formData: FormData) {
         id: true,
       },
     });
-
     if (!existingChat) {
       chatId = "";
     }
@@ -93,10 +89,21 @@ export async function sendMessageAction(formData: FormData) {
     },
   });
 
+  let assistantContent = "";
+
+  try {
+    assistantContent = await generateChatReply(chatId);
+  } catch (error) {
+    assistantContent =
+      error instanceof Error
+        ? `模型调用失败：${error.message}`
+        : "模型调用失败，请稍后再试。";
+  }
+
   await prisma.message.create({
     data: {
       role: "assistant",
-      content: buildAssistantReply(content),
+      content: assistantContent,
       chatId,
     },
   });

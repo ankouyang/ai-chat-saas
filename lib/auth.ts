@@ -50,7 +50,6 @@ export const authOptions: NextAuthOptions = {
             name: name || email.split("@")[0],
           },
         });
-        console.log("[auth]", user);
 
         return {
           id: user.id,

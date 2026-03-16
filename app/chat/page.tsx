@@ -68,6 +68,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
     redirect("/chat");
   }
 
+  console.log("activeChat", activeChat);
   const welcomeTitle = activeChat?.title ?? "今天想把什么真正做出来？";
   const messages = activeChat?.messages ?? [];
 
