@@ -1,6 +1,5 @@
 import { AppSidebar } from "@/components/app-sidebar";
-import { ChatInput } from "@/components/chat-input";
-import { ChatMessage } from "@/components/chat-message";
+import { ChatWorkspace } from "@/components/chat-workspace";
 import { SetupNotice } from "@/components/setup-notice";
 import { SignOutButton } from "@/components/sign-out-button";
 import { auth } from "@/lib/auth";
@@ -67,10 +66,12 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
   if (isConfigured && activeChatId && !activeChat) {
     redirect("/chat");
   }
-
-  console.log("activeChat", activeChat);
   const welcomeTitle = activeChat?.title ?? "今天想把什么真正做出来？";
-  const messages = activeChat?.messages ?? [];
+  const messages =
+    activeChat?.messages.map((message) => ({
+      ...message,
+      role: message.role === "user" ? ("user" as const) : ("assistant" as const),
+    })) ?? [];
 
   return (
     <main className="min-h-screen bg-[var(--color-stone)] text-[var(--color-ink)]">
@@ -113,27 +114,10 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
                 </p>
               </div>
 
-              <div className="flex-1 space-y-4">
-                {messages.length === 0 ? (
-                  <div className="rounded-[28px] border border-dashed border-[var(--color-ink)]/18 bg-white/55 px-5 py-8 text-sm leading-7 text-[var(--color-ink)]/60">
-                    当前还没有消息。你可以直接在下方输入一段需求，系统会自动创建会话、保存用户消息，并写入一条演示用助手回复。
-                  </div>
-                ) : null}
-                {messages.map((message) => {
-                  const role = message.role === "user" ? "user" : "assistant";
-
-                  return (
-                    <ChatMessage
-                      key={message.id}
-                      role={role}
-                      title={role === "user" ? "你" : "灵感工位"}
-                      body={message.content}
-                    />
-                  );
-                })}
-              </div>
-
-              <ChatInput chatId={activeChat?.id} />
+              <ChatWorkspace
+                initialChatId={activeChat?.id}
+                initialMessages={messages}
+              />
             </div>
           </div>
         </section>

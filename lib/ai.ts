@@ -69,7 +69,10 @@ function extractAssistantContent(data: {
   );
 }
 
-async function readStreamingChatCompletion(response: Response) {
+async function readStreamingChatCompletion(
+  response: Response,
+  onChunk?: (chunk: string) => void,
+) {
   const reader = response.body?.getReader();
 
   if (!reader) {
@@ -119,6 +122,7 @@ async function readStreamingChatCompletion(response: Response) {
         }
 
         assistantContent += delta;
+        onChunk?.(delta);
         console.log("[model.stream.chunk]", delta);
       } catch (error) {
         console.error("[model.stream.parse_failed]", {
@@ -180,7 +184,15 @@ async function requestChatCompletion({
   });
 }
 
-export async function generateChatReply(chatId: string) {
+async function generateChatReplyInternal({
+  chatId,
+  stream,
+  onChunk,
+}: {
+  chatId: string;
+  stream: boolean;
+  onChunk?: (chunk: string) => void;
+}) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
 
   if (!apiKey) {
@@ -223,6 +235,7 @@ export async function generateChatReply(chatId: string) {
     modelCandidates,
     chatId,
     messageCount: messages.length,
+    stream,
     streamLog,
   });
 
@@ -234,6 +247,7 @@ export async function generateChatReply(chatId: string) {
       model,
       attempt: index + 1,
       totalAttempts: modelCandidates.length,
+      stream,
     });
 
     const response = await requestChatCompletion({
@@ -241,7 +255,7 @@ export async function generateChatReply(chatId: string) {
       apiKey,
       model,
       messages,
-      streamLog,
+      streamLog: stream,
     });
 
     if (!response.ok) {
@@ -276,8 +290,8 @@ export async function generateChatReply(chatId: string) {
       throw lastError;
     }
 
-    if (streamLog) {
-      return readStreamingChatCompletion(response);
+    if (stream) {
+      return readStreamingChatCompletion(response, onChunk);
     }
 
     const data = (await response.json()) as {
@@ -298,4 +312,22 @@ export async function generateChatReply(chatId: string) {
   }
 
   throw lastError ?? new Error("模型调用失败：未能拿到有效响应。");
+}
+
+export async function generateChatReply(chatId: string) {
+  return generateChatReplyInternal({
+    chatId,
+    stream: shouldStreamLog(),
+  });
+}
+
+export async function generateChatReplyStream(
+  chatId: string,
+  onChunk: (chunk: string) => void,
+) {
+  return generateChatReplyInternal({
+    chatId,
+    stream: true,
+    onChunk,
+  });
 }
