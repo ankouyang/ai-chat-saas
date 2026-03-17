@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useRef, useState, useTransition } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { ChatMessage } from "@/components/chat-message";
 
@@ -29,13 +29,24 @@ export function ChatWorkspace({
   const [messages, setMessages] = useState<MessageItem[]>(initialMessages);
   const [content, setContent] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const [isStreaming, startTransition] = useTransition();
+  const [isStreaming, setIsStreaming] = useState(false);
   const assistantMessageIdRef = useRef("");
+  const pendingChatIdRef = useRef("");
+  const skipNextSyncRef = useRef(false);
 
   useEffect(() => {
+    if (skipNextSyncRef.current && initialChatId === pendingChatIdRef.current) {
+      skipNextSyncRef.current = false;
+      return;
+    }
+
+    if (isStreaming) {
+      return;
+    }
+
     setChatId(initialChatId ?? "");
     setMessages(initialMessages);
-  }, [initialChatId, initialMessages]);
+  }, [initialChatId, initialMessages, isStreaming]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,117 +77,77 @@ export function ChatWorkspace({
       },
     ]);
     setContent("");
+    setIsStreaming(true);
 
-    startTransition(() => {
-      void (async () => {
-        try {
-          const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              content: trimmed,
-              chatId: chatId || undefined,
-            }),
-          });
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: trimmed,
+          chatId: chatId || undefined,
+        }),
+      });
 
-          if (!response.ok || !response.body) {
-            const errorText = await response.text();
-            throw new Error(errorText || "聊天请求失败");
-          }
+      if (!response.ok || !response.body) {
+        const errorText = await response.text();
+        throw new Error(errorText || "聊天请求失败");
+      }
 
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-          const appendAssistantChunk = (chunk: string) => {
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantMessageIdRef.current
-                  ? { ...message, content: `${message.content}${chunk}` }
-                  : message,
-              ),
-            );
-          };
+      const appendAssistantChunk = (chunk: string) => {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantMessageIdRef.current
+              ? { ...message, content: `${message.content}${chunk}` }
+              : message,
+          ),
+        );
+      };
 
-          while (true) {
-            const { value, done } = await reader.read();
+      const processRawEvent = (rawEvent: string) => {
+        const eventName =
+          rawEvent
+            .split("\n")
+            .find((line) => line.startsWith("event:"))
+            ?.slice(6)
+            .trim() ?? "message";
+        const dataText = rawEvent
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .join("\n");
 
-            if (done) {
-              break;
-            }
+        if (!dataText) {
+          return;
+        }
 
-            buffer += decoder.decode(value, { stream: true });
+        const payload = JSON.parse(dataText) as {
+          chatId?: string;
+          content?: string;
+          message?: string;
+        };
 
-            while (buffer.includes("\n\n")) {
-              const separatorIndex = buffer.indexOf("\n\n");
-              const rawEvent = buffer.slice(0, separatorIndex);
-              buffer = buffer.slice(separatorIndex + 2);
+        if (eventName === "meta" && payload.chatId) {
+          pendingChatIdRef.current = payload.chatId;
+          skipNextSyncRef.current = true;
+          setChatId(payload.chatId);
+          router.replace(`/chat?chatId=${payload.chatId}`);
+          return;
+        }
 
-              const eventName =
-                rawEvent
-                  .split("\n")
-                  .find((line) => line.startsWith("event:"))
-                  ?.slice(6)
-                  .trim() ?? "message";
-              const dataText = rawEvent
-                .split("\n")
-                .filter((line) => line.startsWith("data:"))
-                .map((line) => line.slice(5).trim())
-                .join("\n");
+        if (eventName === "delta" && payload.content) {
+          appendAssistantChunk(payload.content);
+          return;
+        }
 
-              if (!dataText) {
-                continue;
-              }
-
-              const payload = JSON.parse(dataText) as {
-                chatId?: string;
-                content?: string;
-                message?: string;
-              };
-
-              if (eventName === "meta" && payload.chatId) {
-                setChatId(payload.chatId);
-                router.replace(`/chat?chatId=${payload.chatId}`);
-                continue;
-              }
-
-              if (eventName === "delta" && payload.content) {
-                appendAssistantChunk(payload.content);
-                continue;
-              }
-
-              if (eventName === "error") {
-                const message = payload.message || "模型调用失败，请稍后再试。";
-
-                setErrorMessage(message);
-                setMessages((current) =>
-                  current.map((item) =>
-                    item.id === assistantMessageIdRef.current
-                      ? { ...item, content: message }
-                      : item,
-                  ),
-                );
-                continue;
-              }
-
-              if (eventName === "done" && payload.content !== undefined) {
-                setMessages((current) =>
-                  current.map((item) =>
-                    item.id === assistantMessageIdRef.current
-                      ? { ...item, content: payload.content ?? item.content }
-                      : item,
-                  ),
-                );
-              }
-            }
-          }
-
-          router.refresh();
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "聊天请求失败，请稍后再试。";
+        if (eventName === "error") {
+          const message = payload.message || "模型调用失败，请稍后再试。";
 
           setErrorMessage(message);
           setMessages((current) =>
@@ -186,9 +157,59 @@ export function ChatWorkspace({
                 : item,
             ),
           );
+          return;
         }
-      })();
-    });
+
+        if (eventName === "done" && payload.content !== undefined) {
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === assistantMessageIdRef.current
+                ? { ...item, content: payload.content ?? item.content }
+                : item,
+            ),
+          );
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        while (buffer.includes("\n\n")) {
+          const separatorIndex = buffer.indexOf("\n\n");
+          const rawEvent = buffer.slice(0, separatorIndex);
+          buffer = buffer.slice(separatorIndex + 2);
+          processRawEvent(rawEvent);
+        }
+      }
+
+      const remaining = buffer.trim();
+
+      if (remaining) {
+        processRawEvent(remaining);
+      }
+
+      router.refresh();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "聊天请求失败，请稍后再试。";
+
+      setErrorMessage(message);
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantMessageIdRef.current
+            ? { ...item, content: message }
+            : item,
+        ),
+      );
+    } finally {
+      setIsStreaming(false);
+    }
   }
 
   return (
