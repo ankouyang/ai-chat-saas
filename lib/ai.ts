@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db";
+import { listRecentChatMessages } from "@/lib/message-cache";
 
 type ModelMessage = {
   role: "system" | "user" | "assistant";
@@ -199,19 +199,7 @@ async function generateChatReplyInternal({
     return "当前还没有配置 OPENAI_API_KEY，所以这里只能先停在数据库闭环。配置好模型 Key 后，这里会返回真实模型回复。";
   }
 
-  const history = await prisma.message.findMany({
-    where: {
-      chatId,
-    },
-    orderBy: {
-      createdAt: "asc",
-    },
-    take: 12,
-    select: {
-      role: true,
-      content: true,
-    },
-  });
+  const history = await listRecentChatMessages(chatId, 12);
 
   const messages: ModelMessage[] = [
     {

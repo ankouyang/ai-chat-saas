@@ -3,6 +3,7 @@ import { ChatWorkspace } from "@/components/chat-workspace";
 import { SetupNotice } from "@/components/setup-notice";
 import { SignOutButton } from "@/components/sign-out-button";
 import { auth } from "@/lib/auth";
+import { listChatMessages } from "@/lib/message-cache";
 import { prisma } from "@/lib/db";
 import { redirect } from "next/navigation";
 
@@ -49,29 +50,22 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
           select: {
             id: true,
             title: true,
-            messages: {
-              orderBy: {
-                createdAt: "asc",
-              },
-              select: {
-                id: true,
-                role: true,
-                content: true,
-              },
-            },
           },
         })
       : null;
+
+  const messages = activeChat?.id
+    ? (await listChatMessages(activeChat.id)).map((message) => ({
+        id: message.id,
+        role: message.role === "user" ? ("user" as const) : ("assistant" as const),
+        content: message.content,
+      }))
+    : [];
 
   if (isConfigured && activeChatId && !activeChat) {
     redirect("/chat");
   }
   const welcomeTitle = activeChat?.title ?? "今天想把什么真正做出来？";
-  const messages =
-    activeChat?.messages.map((message) => ({
-      ...message,
-      role: message.role === "user" ? ("user" as const) : ("assistant" as const),
-    })) ?? [];
 
   return (
     <main className="min-h-screen bg-[var(--color-stone)] text-[var(--color-ink)]">

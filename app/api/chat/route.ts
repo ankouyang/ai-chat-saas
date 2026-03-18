@@ -5,6 +5,7 @@ import { generateChatReplyStream } from "@/lib/ai";
 import { auth } from "@/lib/auth";
 import { buildChatTitle, ensureChatForUser } from "@/lib/chat";
 import { prisma } from "@/lib/db";
+import { appendChatMessageToCache } from "@/lib/message-cache";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -31,14 +32,16 @@ export async function POST(request: Request) {
     userId: session.user.id,
     content,
   });
-
-  await prisma.message.create({
+  // 同步到数据库
+  const userMessage = await prisma.message.create({
     data: {
       role: "user",
       content,
       chatId,
     },
   });
+  // 同步到缓存
+  await appendChatMessageToCache(userMessage);
 
   const encoder = new TextEncoder();
 
@@ -61,14 +64,16 @@ export async function POST(request: Request) {
         });
 
         assistantContent = finalContent;
-
-        await prisma.message.create({
+        // 输出到数据库
+        const assistantMessage = await prisma.message.create({
           data: {
             role: "assistant",
             content: assistantContent,
             chatId,
           },
         });
+        // 同步到缓存
+        await appendChatMessageToCache(assistantMessage);
 
         await prisma.chat.update({
           where: {
@@ -87,13 +92,14 @@ export async function POST(request: Request) {
             ? `模型调用失败：${error.message}`
             : "模型调用失败，请稍后再试。";
 
-        await prisma.message.create({
+        const assistantMessage = await prisma.message.create({
           data: {
             role: "assistant",
             content: assistantContent,
             chatId,
           },
         });
+        await appendChatMessageToCache(assistantMessage);
 
         await prisma.chat.update({
           where: {
