@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getRedisClient, isRedisConfigured } from "@/lib/redis";
+import { logChatTrace, logChatTraceError } from "@/lib/chat-trace";
 
 export type CachedChatMessage = {
   id: string;
@@ -11,6 +12,25 @@ export type CachedChatMessage = {
 
 const DEFAULT_MESSAGE_CACHE_TTL_MS = 15_000;
 const AI_HISTORY_LIMIT = 12;
+
+type MessageCacheContext = {
+  source: "page" | "model" | "route";
+  traceId?: string;
+};
+
+function shouldCacheDebugLog() {
+  const value = process.env.CACHE_DEBUG_LOG?.trim()?.toLowerCase();
+
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function logCacheTrace(event: string, metadata: Record<string, unknown>) {
+  if (!shouldCacheDebugLog()) {
+    return;
+  }
+
+  logChatTrace(event, metadata);
+}
 
 function resolveMessageCacheTtlMs() {
   const raw = process.env.MESSAGE_CACHE_TTL_MS?.trim();
@@ -140,41 +160,93 @@ async function queryMessagesFromDatabase(chatId: string, take?: number) {
   });
 }
 
-export async function listChatMessages(chatId: string) {
+export async function listChatMessages(
+  chatId: string,
+  context: MessageCacheContext = { source: "page" },
+) {
   const cacheKey = getFullMessagesCacheKey(chatId);
   const cached = await readMessagesFromRedis(cacheKey);
 
   if (cached) {
+    logCacheTrace("cache.hit", {
+      traceId: context.traceId,
+      source: context.source,
+      chatId,
+      cacheKey,
+      messageCount: cached.length,
+    });
     return cached;
   }
+
+  logCacheTrace("cache.miss", {
+    traceId: context.traceId,
+    source: context.source,
+    chatId,
+    cacheKey,
+  });
 
   const messages = await queryMessagesFromDatabase(chatId);
 
   if (isRedisConfigured()) {
     await writeMessagesToRedis(cacheKey, messages);
+    logCacheTrace("cache.write", {
+      traceId: context.traceId,
+      source: context.source,
+      chatId,
+      cacheKey,
+      messageCount: messages.length,
+    });
   }
 
   return messages;
 }
 
-export async function listRecentChatMessages(chatId: string, take = AI_HISTORY_LIMIT) {
+export async function listRecentChatMessages(
+  chatId: string,
+  take = AI_HISTORY_LIMIT,
+  context: MessageCacheContext = { source: "model" },
+) {
   const cacheKey = getRecentMessagesCacheKey(chatId, take);
   const cached = await readMessagesFromRedis(cacheKey);
 
   if (cached) {
+    logCacheTrace("cache.hit", {
+      traceId: context.traceId,
+      source: context.source,
+      chatId,
+      cacheKey,
+      messageCount: cached.length,
+    });
     return cached;
   }
+
+  logCacheTrace("cache.miss", {
+    traceId: context.traceId,
+    source: context.source,
+    chatId,
+    cacheKey,
+  });
 
   const messages = await queryMessagesFromDatabase(chatId, take);
 
   if (isRedisConfigured()) {
     await writeMessagesToRedis(cacheKey, messages);
+    logCacheTrace("cache.write", {
+      traceId: context.traceId,
+      source: context.source,
+      chatId,
+      cacheKey,
+      messageCount: messages.length,
+    });
   }
 
   return messages;
 }
 
-export async function appendChatMessageToCache(message: CachedChatMessage) {
+export async function appendChatMessageToCache(
+  message: CachedChatMessage,
+  context: MessageCacheContext = { source: "route" },
+) {
   const redis = getRedisClient();
 
   if (!redis) {
@@ -214,8 +286,18 @@ export async function appendChatMessageToCache(message: CachedChatMessage) {
     }
 
     await Promise.all(writes);
+    logCacheTrace("cache.append", {
+      traceId: context.traceId,
+      source: context.source,
+      chatId: message.chatId,
+      fullCacheUpdated: Boolean(fullMessages),
+      recentCacheUpdated: Boolean(recentMessages),
+      role: message.role,
+    });
   } catch (error) {
-    console.error("[message-cache.append_failed]", {
+    logChatTraceError("cache.append_failed", {
+      traceId: context.traceId,
+      source: context.source,
       chatId: message.chatId,
       error,
     });
@@ -235,6 +317,6 @@ export async function invalidateChatMessageCache(chatId: string) {
       redis.del(getRecentMessagesCacheKey(chatId, AI_HISTORY_LIMIT)),
     ]);
   } catch (error) {
-    console.error("[message-cache.invalidate_failed]", { chatId, error });
+    logChatTraceError("cache.invalidate_failed", { chatId, error });
   }
 }

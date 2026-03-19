@@ -48,10 +48,14 @@ bun dev
 UPSTASH_REDIS_REST_URL="https://your-database.upstash.io"
 UPSTASH_REDIS_REST_TOKEN="your-upstash-token"
 MESSAGE_CACHE_TTL_MS="15000"
+CACHE_DEBUG_LOG="false"
+OPENAI_TIMEOUT_MS="30000"
 ```
 
 - `UPSTASH_REDIS_REST_URL`：Upstash Redis REST URL
 - `UPSTASH_REDIS_REST_TOKEN`：Upstash Redis REST Token
 - `MESSAGE_CACHE_TTL_MS`：消息缓存 TTL，默认 `15000` 毫秒
+- `CACHE_DEBUG_LOG`：是否打印缓存命中/回源日志，默认 `false`
+- `OPENAI_TIMEOUT_MS`：模型请求超时时间，默认 `30000` 毫秒
 
 如果没有配置 Upstash Redis 凭据，系统会自动回退为数据库直读。
